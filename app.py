@@ -11,6 +11,12 @@ change to their field definitions.
 
 Endpoints
 ---------
+GET /
+    Human-facing landing route. Not called by the app — just so a
+    person (or a search engine) hitting the bare domain sees something
+    other than a bare 404. Returns a small plain-text description and
+    links to /health.
+
 GET /health
     Liveness check. Returns {"status": "ok"}.
 
@@ -82,6 +88,22 @@ def _require_env(*names):
     missing = [n for n in names if not os.environ.get(n)]
     if missing:
         abort(500, description=f"Server is missing required environment variables: {', '.join(missing)}")
+
+
+@app.route("/", methods=["GET"])
+def root():
+    # Not used by the app itself — this exists purely so a human (or
+    # a search-engine crawler) landing on the bare domain sees a real,
+    # deliberate response instead of a bare 404. Kept intentionally
+    # tiny and static: no upstream calls, no auth check, can't fail.
+    return (
+        "Jonah backend is running.\n\n"
+        "This service is a private API proxy for the Jonah iOS app — "
+        "it has no public UI.\n\n"
+        "Liveness check: /health\n",
+        200,
+        {"Content-Type": "text/plain; charset=utf-8"},
+    )
 
 
 @app.route("/health", methods=["GET"])

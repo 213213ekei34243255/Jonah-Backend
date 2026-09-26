@@ -14,12 +14,13 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
-from app.api import routes_compat, routes_health, routes_news, routes_providers, routes_search, routes_vision
+from app.api import routes_compat, routes_health, routes_news, routes_providers, routes_search, routes_shopping, routes_vision
 from app.cache import build_cache
 from app.cache.base import CacheBackend
 from app.config import Settings, get_settings
 from app.logging_config import configure_logging, log_event
 from app.middleware import install_middleware
+from app.ebay import EbayClient
 from app.news import NewsApiClient
 from app.providers.base import SearchProvider
 from app.providers.manager import ProviderManager
@@ -79,11 +80,13 @@ def create_app(
         app.state.fetcher = page_fetcher
         app.state.news = NewsApiClient(settings, http)
         app.state.vision = VisionClient(settings, http)
+        app.state.ebay = EbayClient(settings, http)
         app.state.service = SearchService(settings, manager, cache_backend, page_fetcher)
         log_event(
             log, "startup", version=__version__, environment=settings.environment,
             providers_enabled=[p.name for p in manager.enabled()], cache=cache_backend.name,
             news_enabled=app.state.news.is_configured(), image_source_enabled=app.state.vision.is_configured(),
+            shopping_enabled=app.state.ebay.is_configured(),
             auth_enabled=bool(settings.api_keys), rate_limit_per_minute=settings.rate_limit_per_minute,
         )  # fmt: skip
         if not manager.enabled():
@@ -116,6 +119,7 @@ def create_app(
     app.include_router(routes_compat.router)
     app.include_router(routes_news.router)
     app.include_router(routes_vision.router)
+    app.include_router(routes_shopping.router)
     app.include_router(routes_providers.router)
     return app
 

@@ -107,6 +107,8 @@ async def headlines(
     request: Request,
     country: Annotated[str | None, Query(description="Two-letter country code (default: NEWS_DEFAULT_COUNTRY, 'in').")] = None,
     category: Annotated[str | None, Query(description="business, entertainment, general, health, science, sports or technology.")] = None,
+    page: Annotated[int | None, Query(ge=1, le=100, description="Page number (optional; Jonah Browser loads more as you scroll).")] = None,
+    page_size: Annotated[int, Query(alias="pageSize", ge=1, le=100, description="Articles per page (default 20, as always).")] = 20,
     _client: str = Depends(guard),
 ):
     settings = request.app.state.settings
@@ -117,7 +119,8 @@ async def headlines(
         return bad_request(str(exc))
     if (missing := _not_configured(request)) is not None:
         return missing
-    params: dict[str, Any] = {"country": chosen_country, "pageSize": 20}
+    paging: dict[str, Any] = {"pageSize": page_size, **({"page": page} if page else {})}
+    params: dict[str, Any] = {"country": chosen_country, **paging}
     if chosen_category:
         params["category"] = chosen_category
     try:
@@ -126,7 +129,7 @@ async def headlines(
             return JSONResponse(primary)
         # The original fallback: when NewsAPI has no headlines for this country, the newest articles on a broad topic.
         topic = chosen_category if chosen_category and chosen_category != "general" else "technology"
-        return JSONResponse(await _newsapi(request, "everything", {"q": topic, "pageSize": 20, "sortBy": "publishedAt"}))
+        return JSONResponse(await _newsapi(request, "everything", {"q": topic, **paging, "sortBy": "publishedAt"}))
     except ProviderError as exc:
         return upstream_error_response(WHAT, exc, settings)
 

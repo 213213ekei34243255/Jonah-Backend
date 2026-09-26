@@ -489,3 +489,122 @@ async def test_oversized_request_bodies_are_refused(start):
     assert streamed.status_code == 413
     small = await client.post("/search/image-source", json={"image_url": "https://img.example/a.jpg"}, headers=AUTH)
     assert small.status_code != 413
+
+
+# ======================================================================================================== eBay
+
+EBAY_ID = "JonahBro-jonah-PRD-1234abcde-5678efgh"
+EBAY_SECRET = "PRD-1234abcd5678-9abc-def0-1234"
+TOKEN = {"access_token": "v^1.1#i^1#fake-app-token", "expires_in": 7200, "token_type": "Application Access Token"}
+EBAY_RESULTS = {"total": 1, "limit": 12, "offset": 0, "itemSummaries": [{"itemId": "v1|123456789|0", "title": "Red summer dress", "price": {"value": "24.50", "currency": "USD"}, "itemWebUrl": "https://www.ebay.com/itm/123456789"}]}
+
+
+def ebay_site(search=None, token=None):
+    """A fake api.ebay.com: the token endpoint and the Browse API, each a list of replies (the last one repeats)."""
+    replies = {"token": list(token or [httpx.Response(200, json=TOKEN)]), "browse": list(search or [httpx.Response(200, json=EBAY_RESULTS)])}
+
+    def handler(request):
+        kind = "token" if request.url.path == "/identity/v1/oauth2/token" else "browse"
+        queue = replies[kind]
+        return queue.pop(0) if len(queue) > 1 else queue[0]
+
+    return handler
+
+
+def ebay_settings(**extra):
+    return {"ebay_client_id": EBAY_ID, "ebay_client_secret": EBAY_SECRET, **extra}
+
+
+async def test_ebay_search_as_jonahs_home_page_asks(start):
+    internet = Internet(api_ebay_com=ebay_site())
+    client = await start(internet, **ebay_settings())
+    response = await client.get("/shopping/ebay", params={"q": "dress", "category_ids": "15724", "limit": "12", "sort": "newlyListed"}, headers=AUTH)
+    assert response.status_code == 200 and response.json() == EBAY_RESULTS
+    token_call, search_call = internet.to("api.ebay.com")
+    assert token_call.url.path == "/identity/v1/oauth2/token" and token_call.method == "POST"
+    assert token_call.headers["authorization"] == "Basic " + base64.b64encode(f"{EBAY_ID}:{EBAY_SECRET}".encode()).decode()
+    assert dict(httpx.QueryParams(token_call.content.decode())) == {"grant_type": "client_credentials", "scope": "https://api.ebay.com/oauth/api_scope"}
+    assert search_call.url.path == "/buy/browse/v1/item_summary/search"
+    assert dict(search_call.url.params) == {"q": "dress", "limit": "12", "offset": "0", "sort": "newlyListed", "category_ids": "15724"}
+    assert search_call.headers["authorization"] == "Bearer " + TOKEN["access_token"]
+    assert search_call.headers["x-ebay-c-marketplace-id"] == "EBAY_US" and "x-ebay-c-enduserctx" not in search_call.headers
+
+
+async def test_ebay_token_is_reused_and_renewed_when_ebay_rejects_it(start):
+    rejected = httpx.Response(401, json={"errors": [{"message": "Invalid access token"}]})
+    internet = Internet(api_ebay_com=ebay_site(search=[httpx.Response(200, json=EBAY_RESULTS), rejected, httpx.Response(200, json=EBAY_RESULTS)]))
+    client = await start(internet, **ebay_settings())
+    for q in ("a", "b"):
+        assert (await client.get("/shopping/ebay", params={"q": q}, headers=AUTH)).status_code == 200
+    paths = [r.url.path.split("/")[-1] for r in internet.to("api.ebay.com")]
+    assert paths == ["token", "search", "search", "token", "search"], "one token for the first two searches; the rejected one is renewed once"
+
+
+async def test_ebay_filters_and_marketplace(start):
+    internet = Internet(api_ebay_com=ebay_site())
+    client = await start(internet, **ebay_settings(ebay_affiliate_campaign_id="5338123456"))
+    params = {"q": "iphone  15", "min_price": "100", "max_price": "450.5", "condition": "NEW", "buying": "fixed_price", "sort": "-price", "limit": "500", "marketplace": "ebay_gb"}
+    assert (await client.get("/shopping/ebay", params=params, headers=AUTH)).status_code == 200
+    search = internet.to("api.ebay.com")[-1]
+    assert search.url.params["filter"] == "price:[100..450.5],conditions:{NEW},buyingOptions:{FIXED_PRICE}"
+    assert (search.url.params["q"], search.url.params["limit"], search.url.params["sort"]) == ("iphone 15", "200", "-price")
+    assert search.headers["x-ebay-c-marketplace-id"] == "EBAY_GB"
+    assert search.headers["x-ebay-c-enduserctx"] == "affiliateCampaignId=5338123456"
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {}, {"q": "x" * 351}, {"q": "x", "sort": "cheapest"}, {"q": "x", "condition": "broken"}, {"q": "x", "buying": "haggle"},
+        {"q": "x", "marketplace": "EBAY_MARS"}, {"q": "x", "min_price": "abc"}, {"q": "x", "max_price": "-5"}, {"q": "x", "max_price": "inf"},
+        {"q": "x", "limit": "ten"}, {"q": "x", "category_ids": "15724,220"},
+    ],
+)  # fmt: skip
+async def test_ebay_bad_input_is_a_400_and_nothing_is_sent(start, params):
+    internet = Internet(api_ebay_com=ebay_site())
+    client = await start(internet, **ebay_settings())
+    response = await client.get("/shopping/ebay", params=params, headers=AUTH)
+    assert response.status_code == 400 and response.json()["error"]["upstream_status"] is None
+    assert internet.to("api.ebay.com") == []
+
+
+async def test_ebay_not_configured_wrong_keys_and_limits_use_the_original_error_format(start):
+    missing = await (await start(Internet())).get("/shopping/ebay", params={"q": "x"}, headers=AUTH)
+    assert missing.status_code == 503 and "EBAY_CLIENT_ID" in missing.json()["error"]["message"]
+
+    wrong = Internet(api_ebay_com=ebay_site(token=[httpx.Response(401, json={"error": "invalid_client", "error_description": "client authentication failed"})]))
+    response = await (await start(wrong, **ebay_settings())).get("/shopping/ebay", params={"q": "x"}, headers=AUTH)
+    assert response.status_code == 503
+    assert response.json()["error"] == {"message": "eBay search request (eBay sign-in) failed: upstream HTTP 401 - invalid_client: client authentication failed", "upstream_status": 401}
+    assert EBAY_SECRET not in response.text and base64.b64encode(f"{EBAY_ID}:{EBAY_SECRET}".encode()).decode() not in response.text
+    assert [r.url.path for r in wrong.to("api.ebay.com")] == ["/identity/v1/oauth2/token"], "no search without a token"
+
+    limit = {"errors": [{"errorId": 12001, "message": "The call limit has been exceeded.", "longMessage": "The call limit for this application has been exceeded for today."}]}
+    limited = Internet(api_ebay_com=ebay_site(search=[httpx.Response(429, json=limit)]))
+    response = await (await start(limited, **ebay_settings())).get("/shopping/ebay", params={"q": "x"}, headers=AUTH)
+    assert response.json()["error"] == {"message": "eBay search request failed: upstream HTTP 429 - The call limit for this application has been exceeded for today.", "upstream_status": 429}
+
+
+async def test_ebay_sandbox_and_item_details(start):
+    item = {"itemId": "v1|123456789|0", "title": "Red summer dress", "price": {"value": "24.50", "currency": "USD"}}
+    internet = Internet(api_sandbox_ebay_com=ebay_site(search=[httpx.Response(200, json=item)]))
+    client = await start(internet, **ebay_settings(ebay_environment="sandbox"))
+    response = await client.get("/shopping/ebay/item/v1%7C123456789%7C0", headers=AUTH)
+    assert response.status_code == 200 and response.json() == item
+    assert internet.to("api.sandbox.ebay.com")[-1].url.raw_path == b"/buy/browse/v1/item/v1%7C123456789%7C0"
+    for bad in ("123", "v1|abc|0", "..%2F..%2Fsecret"):
+        assert (await client.get(f"/shopping/ebay/item/{bad}", headers=AUTH)).status_code == 400
+    providers = {p["name"]: p for p in (await client.get("/providers", headers=AUTH)).json()}
+    assert providers["ebay"]["kind"] == "shopping" and providers["ebay"]["status"] == "ok"
+
+
+async def test_news_paging_as_jonah_browser_asks(start):
+    def news(request):
+        return httpx.Response(200, json=EMPTY if request.url.path.endswith("top-headlines") else TECH)
+
+    internet = Internet(newsapi_org=news)
+    client = await start(internet, news_api_key=NEWS_KEY)
+    assert (await client.get("/news/headlines", params={"country": "in", "page": "3", "pageSize": "12"}, headers=AUTH)).json() == TECH
+    first, second = internet.to("newsapi.org")
+    assert dict(first.url.params) == {"country": "in", "pageSize": "12", "page": "3"}
+    assert dict(second.url.params) == {"q": "technology", "pageSize": "12", "page": "3", "sortBy": "publishedAt"}

@@ -58,7 +58,11 @@ def upstream_message(response: httpx.Response) -> str:
         if isinstance(error, dict):
             reason = str(error.get("message") or "")
         elif isinstance(error, str):
-            reason = error
+            # OAuth style (eBay's token endpoint): {"error": "invalid_client", "error_description": "..."}
+            reason = error + (f": {body['error_description']}" if body.get("error_description") else "")
+        errors = body.get("errors")  # eBay's APIs: {"errors": [{"message": ..., "longMessage": ...}]}
+        if not reason and isinstance(errors, list) and errors and isinstance(errors[0], dict):
+            reason = str(errors[0].get("longMessage") or errors[0].get("message") or "")
         reason = reason or str(body.get("message") or "")
     return reason[:300]
 

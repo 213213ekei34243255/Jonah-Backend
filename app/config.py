@@ -51,6 +51,13 @@ class Settings(BaseSettings):
     news_cache_ttl_seconds: int = Field(300, ge=0)  # NewsAPI's free plan allows 100 requests a day: repeat requests are served cached
     google_vision_api_key: SecretStr | None = None  # empty = use GOOGLE_API_KEY (enable the Cloud Vision API on that key's project)
     max_image_mb: float = Field(4.0, gt=0, le=10)  # images sent to Cloud Vision (uploaded, or downloaded by this server)
+
+    # ---- shopping (eBay Browse API)
+    ebay_client_id: str = ""  # "App ID (Client ID)" of your eBay developer keyset
+    ebay_client_secret: SecretStr | None = None  # "Cert ID (Client Secret)" of the same keyset
+    ebay_environment: str = "production"  # or "sandbox": must match the keyset (sandbox keys start with SBX-)
+    ebay_marketplace_id: str = "EBAY_US"  # default marketplace (eBay has no Indian site)
+    ebay_affiliate_campaign_id: str = ""  # eBay Partner Network campaign id: results also carry itemAffiliateWebUrl
     max_request_body_mb: float = Field(8.0, gt=0, le=50)  # largest request body accepted (image uploads are the big ones)
 
     # ---- fetching and extraction (bounded, so a typo fails at startup instead of misbehaving later)
@@ -117,7 +124,7 @@ class Settings(BaseSettings):
         """Every configured secret value, so the logger can mask them if one ever reaches a log line."""
         values = [
             secret_value(self.brave_api_key), secret_value(self.bing_api_key), secret_value(self.google_api_key),
-            secret_value(self.news_api_key), secret_value(self.google_vision_api_key), *self.api_keys,
+            secret_value(self.news_api_key), secret_value(self.google_vision_api_key), secret_value(self.ebay_client_secret), *self.api_keys,
         ]  # fmt: skip
         return [v for v in values if len(v) >= 6]
 

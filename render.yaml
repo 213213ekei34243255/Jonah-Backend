@@ -48,6 +48,15 @@ services:
       # Empty = GOOGLE_API_KEY is used for Cloud Vision (enable the Vision API on that project first).
       - key: GOOGLE_VISION_API_KEY
         sync: false
+      # eBay (Jonah's shopping panels): your keyset's App ID and Cert ID. EBAY_ENVIRONMENT=sandbox only for SBX- keys.
+      - key: EBAY_CLIENT_ID
+        sync: false
+      - key: EBAY_CLIENT_SECRET
+        sync: false
+      - key: EBAY_ENVIRONMENT
+        value: production
+      - key: EBAY_AFFILIATE_CAMPAIGN_ID
+        sync: false
       - key: BING_API_KEY
         sync: false
       - key: ENABLE_WIKIPEDIA

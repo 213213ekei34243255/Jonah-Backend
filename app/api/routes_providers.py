@@ -20,7 +20,7 @@ router = APIRouter(tags=["providers"])
 async def providers(request: Request) -> list[ProviderInfo]:
     state = request.app.state
     manager = state.manager
-    entries = [(p, "search") for p in manager.all_providers] + [(state.news, "news"), (state.vision, "image_source")]
+    entries = [(p, "search") for p in manager.all_providers] + [(state.news, "news"), (state.vision, "image_source"), (state.ebay, "shopping")]
     infos: list[ProviderInfo] = []
     for provider, kind in entries:
         configured = provider.is_configured()

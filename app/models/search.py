@@ -127,7 +127,7 @@ class SearchResponse(BaseModel):
 
 class ProviderInfo(BaseModel):
     name: str
-    kind: str = Field("search", description="search (used by /search) | news (NewsAPI) | image_source (Cloud Vision)")
+    kind: str = Field("search", description="search (used by /search) | news (NewsAPI) | image_source (Cloud Vision) | shopping (eBay)")
     configured: bool
     enabled: bool
     priority: int | None = None

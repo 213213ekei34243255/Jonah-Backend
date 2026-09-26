@@ -378,7 +378,8 @@ async def test_providers_endpoint_lists_status_and_never_keys(make_client):
     assert response.status_code == 200
     assert "super-secret" not in response.text
     by_name = {p["name"]: p for p in response.json()}
-    assert set(by_name) == {"searxng", "brave", "bing", "google", "wikipedia", "newsapi", "google_vision"}
+    assert set(by_name) == {"searxng", "brave", "bing", "google", "wikipedia", "newsapi", "google_vision", "ebay"}
+    assert by_name["ebay"]["kind"] == "shopping" and by_name["ebay"]["status"] == "not_configured"
     assert by_name["newsapi"]["kind"] == "news" and by_name["newsapi"]["status"] == "not_configured"
     assert by_name["google_vision"]["configured"] is True  # falls back to GOOGLE_API_KEY
     assert by_name["brave"]["status"] == "ok" and by_name["brave"]["configured"] is True and by_name["brave"]["priority"] == 2

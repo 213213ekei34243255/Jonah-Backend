@@ -94,7 +94,7 @@ app/
   scraper/             security.py (SSRF), fetcher.py, robots.py, extractor.py, sanitizer.py
   cache/               base.py, memory.py, redis.py
   models/search.py     request / response schemas
-tests/                 362 tests, no network access
+tests/                 379 tests, no network access
 ```
 
 ---
@@ -187,6 +187,8 @@ Interactive documentation: `/docs` (Swagger UI) and `/redoc`. Schema: `/openapi.
 | `GET /news/search` | key | News article search, NewsAPI JSON. |
 | `GET /news/sources` | key | News source finder: the publishers NewsAPI covers. |
 | `POST /search/image-source` | key | Where an image appears on the web (Google Cloud Vision). |
+| `GET /shopping/ebay` | key | eBay product search, **eBay's JSON** unchanged (Jonah's shopping panels). |
+| `GET /shopping/ebay/item/{itemId}` | key | One eBay item's details. |
 | `GET /providers` | key | Every provider and upstream API: configured?, priority, status (`ok` / `cooling_down` / `not_configured`), failures, latency. Never shows a key. |
 | `GET /metrics` | key | Prometheus metrics. |
 
@@ -354,6 +356,12 @@ curl -X POST "$BASE/search/image-source" -H "X-Jonah-Key: $KEY" -H "Content-Type
 * A bad or unsupported image is a 400. Vision itself failing (disabled API, no billing, bad key) is the usual 503 format.
 
 > **Cloud Vision setup and cost:** enable the **Cloud Vision API** in your Google Cloud project. Billing must be enabled on the project, even for the free allowance. The first **1,000 web-detection requests a month are free**, then it is paid per 1,000 (check <https://cloud.google.com/vision/pricing>). Either set `GOOGLE_VISION_API_KEY`, or let it use `GOOGLE_API_KEY`: in that case add "Cloud Vision API" to that key's API restrictions.
+
+### Shopping (eBay)
+
+`GET /shopping/ebay?q=iphone` returns eBay's Browse API JSON unchanged: `itemSummaries[]` with title, price, image, `itemWebUrl`, condition, seller. Optional: `limit` (1–200, default 20), `offset`, `sort` (`price`, `-price`, `newlyListed`, `endingSoonest`), `min_price` / `max_price`, `condition` (`new` / `used`), `buying` (`fixed_price` / `auction`), `category_ids` (one category number), `marketplace` (default `EBAY_MARKETPLACE_ID`). `GET /shopping/ebay/item/v1|123456789|0` returns one item.
+
+Set `EBAY_CLIENT_ID` and `EBAY_CLIENT_SECRET` from your eBay keyset. The server gets eBay's access token itself, reuses it for its 2-hour life, and renews it when eBay rejects it. Use production keys (they contain `PRD-`) for real listings; `EBAY_ENVIRONMENT=sandbox` only with sandbox keys (`SBX-`). eBay keeps a new production keyset switched off until you choose the "Marketplace account deletion" exemption (for apps that store no eBay user data) in the developer portal. The default allowance is about 5,000 searches a day. `EBAY_AFFILIATE_CAMPAIGN_ID` (eBay Partner Network) adds commission links (`itemAffiliateWebUrl`).
 
 ### Replacing the old Jonah proxy
 
@@ -641,7 +649,7 @@ Only add providers with an **official API** whose terms allow this use.
 
 ```bash
 pip install -r requirements-dev.txt
-pytest                      # 362 tests, about 20 s, no network access
+pytest                      # 379 tests, about 20 s, no network access
 pytest tests/test_security.py -v
 ```
 

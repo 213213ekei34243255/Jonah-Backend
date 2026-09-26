@@ -35,6 +35,27 @@ GET /search/images?q=...
     Google's Custom Search JSON API with the server-held key + cx,
     returns Google's raw JSON body unchanged.
 
+Errors
+------
+When Google / NewsAPI answers with an error (quota used up, invalid key,
+API not enabled, ...) or cannot be reached, the endpoints return
+
+    HTTP 503   {"error": {"message": "Search request failed: upstream HTTP 429 - <Google's own message>",
+                          "upstream_status": 429}}
+
+and the same reason is written to the server log (Render -> Logs).
+
+Two deliberate choices, both fixes:
+  * The response never contains str(exception). requests' HTTPError text
+    is "403 Client Error: Forbidden for url: https://...?key=<YOUR KEY>&cx=...",
+    i.e. it includes the API key. Only the upstream status and the upstream
+    service's own message are returned, with any key=... / secret scrubbed.
+  * The status is 503, not 502. Cloudflare (which fronts this service)
+    REPLACES the body of an origin 502/504 with its own "error code: 502"
+    page, so the reason was invisible to the app and to anyone debugging.
+    (If you ever see a bare "error code: 503" instead, change
+    UPSTREAM_ERROR_STATUS below to 500.)
+
 Auth
 ----
 Optional shared-secret header check (APP_SHARED_SECRET). This is
@@ -57,6 +78,7 @@ APP_SHARED_SECRET     optional  — if set, requests must send it as
 """
 
 import os
+import re
 import requests
 from flask import Flask, request, jsonify, abort
 
@@ -71,6 +93,10 @@ NEWSAPI_BASE = "https://newsapi.org/v2"
 GOOGLE_CSE_BASE = "https://www.googleapis.com/customsearch/v1"
 
 UPSTREAM_TIMEOUT = 10  # seconds — fail fast rather than hang the app
+
+# Status returned when Google/NewsAPI fails. NOT 502/504: Cloudflare replaces
+# those bodies with its own page and the reason is lost (see "Errors" above).
+UPSTREAM_ERROR_STATUS = 503
 
 
 def _require_shared_secret():
@@ -88,6 +114,49 @@ def _require_env(*names):
     missing = [n for n in names if not os.environ.get(n)]
     if missing:
         abort(500, description=f"Server is missing required environment variables: {', '.join(missing)}")
+
+
+def _scrub(text):
+    """Remove anything secret from text that is about to leave the server or
+    be logged: key=... / apiKey=... query parameters, and the literal values
+    of this service's own keys and shared secret."""
+    text = re.sub(r"(key|apiKey)=[^&\s\"']+", r"\1=[redacted]", str(text), flags=re.IGNORECASE)
+    for secret in (GOOGLE_API_KEY, NEWS_API_KEY, APP_SHARED_SECRET):
+        if secret:
+            text = text.replace(secret, "[redacted]")
+    return text
+
+
+def _upstream_error(what, resp=None, exc=None):
+    """A failed upstream call as a SAFE, readable JSON error (see "Errors" in
+    the module docstring). Pass the upstream response (`resp`) when there was
+    one, or the exception (`exc`) when the request itself failed."""
+    status = resp.status_code if resp is not None else None
+    reason = ""
+    if resp is not None:
+        try:
+            body = resp.json()
+            if isinstance(body, dict):
+                error = body.get("error")
+                if isinstance(error, dict):
+                    reason = error.get("message") or ""
+                elif isinstance(error, str):
+                    reason = error
+                reason = reason or body.get("message") or ""
+        except ValueError:
+            reason = (resp.text or "")[:200]
+    elif exc is not None:
+        # The exception CLASS only (Timeout, ConnectionError, ...). Its text
+        # contains the request URL, and with it the API key.
+        reason = "upstream reply was not JSON" if isinstance(exc, ValueError) else type(exc).__name__
+    reason = _scrub(reason)
+    app.logger.error("%s failed: upstream status=%s reason=%s", what, status, reason)
+    message = f"{what} failed"
+    if status:
+        message += f": upstream HTTP {status}"
+    if reason:
+        message += f" - {reason}"
+    return jsonify({"error": {"message": message[:400], "upstream_status": status}}), UPSTREAM_ERROR_STATUS
 
 
 @app.route("/", methods=["GET"])
@@ -124,14 +193,21 @@ def news_headlines():
             params={"country": country, "pageSize": 20, "apiKey": NEWS_API_KEY},
             timeout=UPSTREAM_TIMEOUT,
         )
-        primary.raise_for_status()
+    except requests.exceptions.RequestException as e:
+        return _upstream_error("News request", exc=e)
+    if not primary.ok:
+        return _upstream_error("News request", resp=primary)
+    try:
         primary_json = primary.json()
+    except ValueError as e:
+        return _upstream_error("News request", exc=e)
 
-        if primary_json.get("articles"):
-            return jsonify(primary_json)
+    if primary_json.get("articles"):
+        return jsonify(primary_json)
 
-        # Same fallback the old NewsService.swift did when top-headlines
-        # for this country comes back empty.
+    # Same fallback the old NewsService.swift did when top-headlines
+    # for this country comes back empty.
+    try:
         fallback = requests.get(
             f"{NEWSAPI_BASE}/everything",
             params={
@@ -142,11 +218,14 @@ def news_headlines():
             },
             timeout=UPSTREAM_TIMEOUT,
         )
-        fallback.raise_for_status()
-        return jsonify(fallback.json())
-
     except requests.exceptions.RequestException as e:
-        return jsonify({"status": "error", "message": f"News request failed: {e}"}), 502
+        return _upstream_error("News request", exc=e)
+    if not fallback.ok:
+        return _upstream_error("News request", resp=fallback)
+    try:
+        return jsonify(fallback.json())
+    except ValueError as e:
+        return _upstream_error("News request", exc=e)
 
 
 @app.route("/search/web", methods=["GET"])
@@ -164,10 +243,14 @@ def search_web():
             params={"key": GOOGLE_API_KEY, "cx": GOOGLE_CSE_ID, "q": query},
             timeout=UPSTREAM_TIMEOUT,
         )
-        resp.raise_for_status()
-        return jsonify(resp.json())
     except requests.exceptions.RequestException as e:
-        return jsonify({"error": {"message": f"Search request failed: {e}"}}), 502
+        return _upstream_error("Search request", exc=e)
+    if not resp.ok:
+        return _upstream_error("Search request", resp=resp)
+    try:
+        return jsonify(resp.json())
+    except ValueError as e:
+        return _upstream_error("Search request", exc=e)
 
 
 @app.route("/search/images", methods=["GET"])
@@ -191,10 +274,14 @@ def search_images():
             },
             timeout=UPSTREAM_TIMEOUT,
         )
-        resp.raise_for_status()
-        return jsonify(resp.json())
     except requests.exceptions.RequestException as e:
-        return jsonify({"error": {"message": f"Image search request failed: {e}"}}), 502
+        return _upstream_error("Image search request", exc=e)
+    if not resp.ok:
+        return _upstream_error("Image search request", resp=resp)
+    try:
+        return jsonify(resp.json())
+    except ValueError as e:
+        return _upstream_error("Image search request", exc=e)
 
 
 if __name__ == "__main__":

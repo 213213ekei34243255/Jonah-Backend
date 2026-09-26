@@ -1,0 +1,21 @@
+# A private SearXNG instance for Jonah Search. Only the differences from SearXNG's defaults are listed.
+# https://docs.searxng.org/admin/settings/index.html
+use_default_settings: true
+
+general:
+  instance_name: "jonah-searxng"
+
+server:
+  # Replaced at runtime by the SEARXNG_SECRET environment variable. Never deploy with this placeholder.
+  secret_key: "set-SEARXNG_SECRET-instead"
+  # This instance is private (only Jonah Search talks to it), so SearXNG's public-instance bot limiter is not needed.
+  limiter: false
+  public_instance: false
+  image_proxy: false
+
+search:
+  safe_search: 0
+  # Jonah Search reads the JSON format. Public instances usually disable it, which is why self-hosting is recommended.
+  formats:
+    - html
+    - json

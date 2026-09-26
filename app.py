@@ -46,6 +46,7 @@ GET /shopping/ebay?q=...
       min_price= / max_price=     (in the marketplace's currency)
       condition=new | used
       buying=fixed_price | auction
+      category_ids=15724          (one eBay category number)
       marketplace=EBAY_US | EBAY_GB | EBAY_DE | ...  (default EBAY_MARKETPLACE_ID)
 
 GET /shopping/ebay/item/<item_id>
@@ -447,6 +448,12 @@ def shopping_ebay():
     marketplace = args.get("marketplace", "").strip().upper() or None
     if marketplace and marketplace not in EBAY_MARKETPLACES:
         return _bad_request(f"Unknown 'marketplace' {marketplace!r}")
+
+    category = args.get("category_ids", "").strip()
+    if category:
+        if not re.fullmatch(r"\d{1,10}", category):
+            return _bad_request("'category_ids' must be one eBay category number, e.g. 15724")
+        params["category_ids"] = category
 
     filters = []
     try:

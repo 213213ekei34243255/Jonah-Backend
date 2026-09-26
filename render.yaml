@@ -1,0 +1,78 @@
+# Render Blueprint: https://render.com/docs/blueprint-spec
+# Dashboard -> New -> Blueprint -> pick this repository. Render builds the Dockerfile, sets PORT, and checks /health.
+# Values marked `sync: false` are asked for when the Blueprint is created (leave any provider you do not use empty).
+
+services:
+  - type: web
+    name: jonah-search
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: LOG_LEVEL
+        value: INFO
+      # A random key is generated on the first deploy. Copy it from the Environment tab; clients send "Authorization: Bearer <key>".
+      - key: SEARCH_API_KEY
+        generateValue: true
+      # Render's load balancer sets X-Forwarded-For: needed so the rate limit applies per client, not per load balancer.
+      - key: TRUST_PROXY_HEADERS
+        value: "true"
+      - key: TRUSTED_PROXY_HOPS
+        value: "1"
+      - key: RATE_LIMIT_PER_MINUTE
+        value: "60"
+      - key: PROVIDER_PRIORITY
+        value: searxng,brave,bing,google,wikipedia
+      - key: USER_AGENT
+        sync: false
+      - key: SEARXNG_URL
+        sync: false
+      - key: BRAVE_API_KEY
+        sync: false
+      # The secret the existing Jonah apps send as X-Jonah-Key: use the SAME value as on the old server, or they stop working.
+      - key: APP_SHARED_SECRET
+        sync: false
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: GOOGLE_CX
+        sync: false
+      - key: NEWS_API_KEY
+        sync: false
+      - key: NEWS_DEFAULT_COUNTRY
+        value: in
+      # Empty = GOOGLE_API_KEY is used for Cloud Vision (enable the Vision API on that project first).
+      - key: GOOGLE_VISION_API_KEY
+        sync: false
+      - key: BING_API_KEY
+        sync: false
+      - key: ENABLE_WIKIPEDIA
+        value: "true"
+      - key: CACHE_TTL_SECONDS
+        value: "300"
+      - key: MAX_RESULTS
+        value: "20"
+      - key: MAX_CONCURRENT_FETCHES
+        value: "4"
+      # Optional: the connection string of a Render Key Value (Redis) instance to share the cache and rate limit across instances.
+      - key: REDIS_URL
+        sync: false
+
+  # ---------------------------------------------------------------------------------------------------------------------------
+  # Optional: your own SearXNG instance as a private service (not reachable from the internet; private services need a paid plan).
+  # Uncomment, deploy, then set SEARXNG_URL on jonah-search to  http://<internal address shown under Connect -> Internal>
+  # (for example http://jonah-searxng:8080).
+  #
+  # - type: pserv
+  #   name: jonah-searxng
+  #   runtime: docker
+  #   plan: starter
+  #   dockerfilePath: ./searxng/Dockerfile
+  #   dockerContext: ./searxng
+  #   envVars:
+  #     - key: SEARXNG_SECRET
+  #       generateValue: true

@@ -1,0 +1,35 @@
+# Everything locally: Jonah Search + a private SearXNG + Redis.
+#   docker compose up --build
+#   curl "http://localhost:8000/search?q=hello"
+# A .env file is optional (copy .env.example); the values below override it where they overlap.
+
+services:
+  jonah-search:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      SEARXNG_URL: http://searxng:8080
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      - searxng
+      - redis
+    restart: unless-stopped
+
+  searxng:
+    build: ./searxng
+    environment:
+      SEARXNG_SECRET: ${SEARXNG_SECRET:-change-me-to-a-long-random-string}
+    expose:
+      - "8080"
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    expose:
+      - "6379"
+    restart: unless-stopped

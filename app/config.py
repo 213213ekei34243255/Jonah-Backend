@@ -79,6 +79,23 @@ class Settings(BaseSettings):
     cache_max_entries: int = Field(1000, ge=1)  # in-memory cache only
     redis_url: str = ""  # empty = in-memory cache and rate limiter
 
+    # ---- developer access (the Mac app's sign-in) and the Developer Console at /admin/: see app/license/
+    license_enabled: bool = True
+    license_data_dir: str = ""  # where the accounts database lives: needs a PERSISTENT disk (Render: a Disk mounted here)
+    license_allow_temporary_storage: bool = False  # production only: try it on a host with no disk (accounts are lost on every restart)
+    license_signing_key: SecretStr | None = None  # Ed25519 private key (PEM or base64 of it); empty = created once inside license_data_dir
+    license_admin_username: str = ""  # the first Developer Console administrator (created only if none exists yet)
+    license_admin_password: SecretStr | None = None  # 12+ characters; empty = a random one is printed once in the log
+    license_admin_reset_password: bool = False  # true = set that administrator's password from LICENSE_ADMIN_PASSWORD at every start (lost-password recovery)
+    license_admin_allowed_ips: str = ""  # comma-separated; empty = the console is reachable from anywhere (it still needs its sign-in)
+    license_admin_enabled: bool = True
+    license_seed_accounts: SecretStr | None = None  # JSON [{"username":..,"password":..}]: created at start if missing (holds plaintext: remove afterwards)
+    license_token_ttl_seconds: int = Field(180, ge=60, le=3600)  # life of the signed token the Mac app holds; it renews every minute
+    license_session_idle_seconds: int = Field(900, ge=120, le=86400)
+    license_max_sessions_per_account: int = Field(5, ge=1, le=50)
+    license_require_https: bool | None = None  # None = required in production
+    license_unlimited_rate_limit_per_minute: int = Field(0, ge=0)  # requests/min for a signed-in developer account; 0 = not rate-limited
+
     # ------------------------------------------------------------------ derived values
 
     @property
@@ -125,6 +142,7 @@ class Settings(BaseSettings):
         values = [
             secret_value(self.brave_api_key), secret_value(self.bing_api_key), secret_value(self.google_api_key),
             secret_value(self.news_api_key), secret_value(self.google_vision_api_key), secret_value(self.ebay_client_secret), *self.api_keys,
+            secret_value(self.license_signing_key), secret_value(self.license_admin_password), secret_value(self.license_seed_accounts),
         ]  # fmt: skip
         return [v for v in values if len(v) >= 6]
 

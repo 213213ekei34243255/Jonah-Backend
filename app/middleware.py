@@ -95,7 +95,8 @@ def install_middleware(app: FastAPI, settings: Settings) -> None:
             response.headers["X-Frame-Options"] = "DENY"
             response.headers["Referrer-Policy"] = "no-referrer"
             if not request.url.path.startswith(_DOC_PATHS):
-                response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'"
+                # setdefault: the Developer Console page (/admin/) sets its own, looser policy so its script and stylesheet can load
+                response.headers.setdefault("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
                 response.headers["Cache-Control"] = "no-store"
             if settings.is_production:
                 response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"

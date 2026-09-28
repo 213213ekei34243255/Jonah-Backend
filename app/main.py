@@ -6,6 +6,7 @@ can be replaced in tests by passing overrides.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -21,11 +22,14 @@ from app.config import Settings, get_settings
 from app.logging_config import configure_logging, log_event
 from app.middleware import install_middleware
 from app.ebay import EbayClient
+from app.license import build_license
+from app.license.api import auth_error_response, router as license_router
+from app.license.service import AuthError
 from app.news import NewsApiClient
 from app.providers.base import SearchProvider
 from app.providers.manager import ProviderManager
 from app.providers.registry import build_providers
-from app.ratelimit import RateLimiter, build_rate_limiter
+from app.ratelimit import MemoryRateLimiter, RateLimiter, build_rate_limiter
 from app.scraper.fetcher import PageFetcher
 from app.service import PageSource, SearchService
 from app.vision import VisionClient
@@ -82,6 +86,11 @@ def create_app(
         app.state.vision = VisionClient(settings, http)
         app.state.ebay = EbayClient(settings, http)
         app.state.service = SearchService(settings, manager, cache_backend, page_fetcher)
+        # Developer access (the Mac app's sign-in + the /admin/ console). A problem here only disables those routes, never the search API.
+        app.state.license, app.state.license_problem = await asyncio.to_thread(build_license, settings)
+        app.state.license_unlimited_limiter = (
+            MemoryRateLimiter(settings.license_unlimited_rate_limit_per_minute) if settings.license_unlimited_rate_limit_per_minute > 0 else None
+        )
         log_event(
             log, "startup", version=__version__, environment=settings.environment,
             providers_enabled=[p.name for p in manager.enabled()], cache=cache_backend.name,
@@ -95,6 +104,8 @@ def create_app(
             yield
         finally:
             await http.aclose()
+            if app.state.license is not None:
+                app.state.license.db.close()
             if cache is None:
                 await cache_backend.close()
             if rate_limiter is None:
@@ -121,6 +132,8 @@ def create_app(
     app.include_router(routes_vision.router)
     app.include_router(routes_shopping.router)
     app.include_router(routes_providers.router)
+    app.include_router(license_router)
+    app.add_exception_handler(AuthError, lambda request, exc: auth_error_response(exc))
     return app
 
 

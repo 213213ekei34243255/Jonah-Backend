@@ -71,6 +71,37 @@ services:
       - key: REDIS_URL
         sync: false
 
+      # ---- Developer access: the Mac app's sign-in and the Developer Console at https://www.jonahbrowser.store/admin/  (README: "Developer access")
+      # Accounts, bans and device bindings live in a database file, so it MUST be on a persistent Disk (see the `disk:` block below: it needs
+      # a paid instance type). Until one is attached and LICENSE_DATA_DIR points into it, developer access stays OFF (its endpoints answer 503)
+      # and search, news and shopping keep working exactly as before.
+      - key: LICENSE_DATA_DIR
+        value: /var/data/license
+      # The first Developer Console administrator (12+ character password). Created only if no administrator exists yet.
+      - key: LICENSE_ADMIN_USERNAME
+        sync: false
+      - key: LICENSE_ADMIN_PASSWORD
+        sync: false
+      # Optional. Accounts to create at start if missing, as JSON: [{"username":"...","password":"..."}]. It holds plaintext passwords:
+      # use it once, then delete the variable (or just create the accounts in the console instead).
+      - key: LICENSE_SEED_ACCOUNTS
+        sync: false
+      # Optional: the Ed25519 signing key (PEM or base64). Empty = one is created once inside the disk. Keep the disk backed up either way.
+      - key: LICENSE_SIGNING_KEY
+        sync: false
+      # Optional but recommended: only serve the console to these IPs (comma-separated).
+      - key: LICENSE_ADMIN_ALLOWED_IPS
+        sync: false
+      # Requests per minute for a signed-in developer account. 0 = not rate-limited at all (everyone else keeps RATE_LIMIT_PER_MINUTE).
+      - key: LICENSE_UNLIMITED_RATE_LIMIT_PER_MINUTE
+        value: "0"
+    # A persistent disk keeps the accounts database across restarts and deploys. Disks need a paid instance type: change `plan: free` above
+    # to `plan: starter` (or higher) and uncomment. Developer access assumes ONE instance and ONE worker (WEB_CONCURRENCY=1, the default here).
+    # disk:
+    #   name: jonah-license
+    #   mountPath: /var/data
+    #   sizeGB: 1
+
   # ---------------------------------------------------------------------------------------------------------------------------
   # Optional: your own SearXNG instance as a private service (not reachable from the internet; private services need a paid plan).
   # Uncomment, deploy, then set SEARXNG_URL on jonah-search to  http://<internal address shown under Connect -> Internal>

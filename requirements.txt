@@ -7,5 +7,7 @@ pydantic-settings==2.15.0
 trafilatura==2.2.0
 lxml==6.1.3
 prometheus-client==0.26.0
+# Developer access (Mac app sign-in): Ed25519 signatures for tokens and device proofs. Passwords use hashlib.scrypt (standard library).
+cryptography==46.0.1
 # Optional: only used when REDIS_URL is set (shared cache + rate limiting across workers/instances).
 redis==8.1.0

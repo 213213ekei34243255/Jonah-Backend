@@ -677,3 +677,53 @@ Security issues: please report privately to the maintainer instead of opening a 
 ## License
 
 [MIT](LICENSE)
+
+---
+
+## Developer access (the Mac app's sign-in) and the Developer Console
+
+This service also controls who may use the Mac app's **developer-access (unlimited) mode**:
+
+```
+Mac app  --HTTPS-->  /v1/auth/*, /v1/session/*  --> SQLite (accounts, devices, sessions, audit) <-- /admin/  Developer Console
+```
+
+The server decides everything. The Mac app holds no credentials and no "authorized" flag: it asks for a sign-in at every launch, then holds a
+signed token that lives 3 minutes and is renewed every minute while this server still approves the account. Code: `app/license/`.
+
+**What "unlimited" means here.** A request that carries a valid developer token (`X-Jonah-License`) is not held to `RATE_LIMIT_PER_MINUTE`
+(or gets `LICENSE_UNLIMITED_RATE_LIMIT_PER_MINUTE`). The token is checked against the live account on every request, so a ban, a revoked device,
+or switching the app / unlimited mode off in the console ends it on the very next request. A patched app that skips its sign-in screen simply has
+no token and gets the ordinary limits. It does not replace `X-Jonah-Key`: that still authenticates the caller.
+
+### The Developer Console: `https://www.jonahbrowser.store/admin/`
+
+Activate/deactivate the whole Mac app; switch unlimited-access mode on/off; create, edit, disable, ban and delete accounts; change passwords;
+see who is active, disabled, banned, expired or online; see and revoke each account's authorized device; force a re-login; set an expiry date;
+read the audit log. One account = one Mac: a second Mac is refused until you **Revoke device**.
+
+Banned, disabled, expired accounts, and a switched-off app or mode, show the user: *"Sorry, your developer access mode has expired. Kindly reinstall
+the app from the Mac App Store or jonahbrowser.com, or please contact Customer Care Service."* A second Mac sees the separate device message.
+A running app checks every 60 seconds, so a ban or deactivation reaches it within about a minute.
+
+### Turning it on (Render)
+
+1. **Attach a persistent Disk** (mount path `/var/data`; needs a paid instance type: see the commented `disk:` block in `render.yaml`).
+   Accounts, bans and device bindings are stored there. Without a disk developer access refuses to start, on purpose: on Render the container's
+   own filesystem is wiped on every restart and every account would vanish. (`LICENSE_ALLOW_TEMPORARY_STORAGE=true` lets you only try it out.)
+2. Set `LICENSE_DATA_DIR=/var/data/license`, `LICENSE_ADMIN_USERNAME` and `LICENSE_ADMIN_PASSWORD` (12+ characters). Optionally
+   `LICENSE_SEED_ACCOUNTS` for the first accounts, `LICENSE_ADMIN_ALLOWED_IPS=your.ip` to only serve the console to yourself.
+3. Deploy. Read the log line `license_ready`: it shows the **public key** (`key_id` + `public_key`). The Mac build needs it (with this server's address)
+   as `LICENSE_KEY_ID` / `LICENSE_PUBLIC_KEY`; it is also served at `GET /v1/public-keys`.
+4. Open `/admin/`, sign in, create accounts (or use the seeded ones), and remove `LICENSE_SEED_ACCOUNTS`.
+
+Licensing problems never stop the search API: if it cannot start, `/v1/*` and `/admin/*` answer 503 with the reason and everything else runs normally.
+Run **one** instance with **one** worker (`WEB_CONCURRENCY=1`, the default in the Dockerfile): the sign-in throttles and challenges live in memory.
+
+### Notes
+
+* Passwords are stored only as scrypt hashes. Tokens are Ed25519 signatures; the private key stays on the server.
+* Sign-in attempts are throttled per user+IP, per user and per IP; the console sign-in locks after repeated failures and uses HttpOnly SameSite=Strict cookies,
+  CSRF tokens and a strict content-security-policy. Restrict it with `LICENSE_ADMIN_ALLOWED_IPS` or put it behind Cloudflare Access.
+* Lost the console password? Set `LICENSE_ADMIN_PASSWORD` (12+ characters) and `LICENSE_ADMIN_RESET_PASSWORD=true`, redeploy, sign in, then turn the reset off.
+* Tests: `pytest tests/test_license.py tests/test_license_api.py`.

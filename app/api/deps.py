@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 
 from fastapi import HTTPException, Request
 
 from app.config import Settings
+from app.ratelimit import LimitDecision
 from app.service import SearchService
 
 
@@ -66,7 +68,18 @@ async def guard(request: Request) -> str:
         client_id = "key:" + hashlib.sha256((token or "").encode()).hexdigest()[:16]
     else:
         client_id = "ip:" + client_ip(request, settings.trust_proxy_headers, settings.trusted_proxy_hops)
-    decision = await request.app.state.rate_limiter.hit(client_id)
+    # Developer access: a signed-in developer account (X-Jonah-License, verified against the LIVE account) is not held to the normal limit.
+    # Without a valid token, or once the account is banned/expired/revoked or the app/unlimited mode is switched off, nothing changes.
+    developer = None
+    licence = getattr(request.app.state, "license", None)
+    if licence is not None and request.headers.get("x-jonah-license"):
+        developer = await asyncio.to_thread(licence.check_license_header, request.headers.get("x-jonah-license"))
+    if developer is not None:
+        client_id = f"dev:{developer['sub']}"
+        limiter = getattr(request.app.state, "license_unlimited_limiter", None)
+        decision = await limiter.hit(client_id) if limiter is not None else LimitDecision(True, 0, 0)
+    else:
+        decision = await request.app.state.rate_limiter.hit(client_id)
     if decision.limit:
         request.state.rate_limit_headers = {"X-RateLimit-Limit": str(decision.limit), "X-RateLimit-Remaining": str(decision.remaining)}
     if not decision.allowed:

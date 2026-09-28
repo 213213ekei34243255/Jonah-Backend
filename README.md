@@ -718,7 +718,9 @@ A running app checks every 60 seconds, so a ban or deactivation reaches it withi
 4. Open `/admin/`, sign in, create accounts (or use the seeded ones), and remove `LICENSE_SEED_ACCOUNTS`.
 
 Licensing problems never stop the search API: if it cannot start, `/v1/*` and `/admin/*` answer 503 with the reason and everything else runs normally.
-Run **one** instance with **one** worker (`WEB_CONCURRENCY=1`, the default in the Dockerfile): the sign-in throttles and challenges live in memory.
+Run **one instance** (a Disk attaches to one instance). Several worker processes on it are fine: they share the database, including the one-time sign-in
+challenges, and start safely together. Only the sign-in lock-out counters are kept per worker, so `WEB_CONCURRENCY=1` (the Dockerfile's default) is the strictest
+setting. If Render runs more workers than you expect, set `WEB_CONCURRENCY=1` in the service's Environment.
 
 ### Notes
 

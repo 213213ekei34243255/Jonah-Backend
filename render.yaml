@@ -96,7 +96,7 @@ services:
       - key: LICENSE_UNLIMITED_RATE_LIMIT_PER_MINUTE
         value: "0"
     # A persistent disk keeps the accounts database across restarts and deploys. Disks need a paid instance type: change `plan: free` above
-    # to `plan: starter` (or higher) and uncomment. Developer access assumes ONE instance and ONE worker (WEB_CONCURRENCY=1, the default here).
+    # to `plan: starter` (or higher) and uncomment. Developer access needs ONE instance (a Disk attaches to one). Several workers on it work too, but WEB_CONCURRENCY=1 (the default here) is the strictest setting.
     # disk:
     #   name: jonah-license
     #   mountPath: /var/data

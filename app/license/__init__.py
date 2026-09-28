@@ -94,7 +94,7 @@ def build_license(settings: Settings) -> tuple[LicenseService | None, str]:
         log_event(log, "license_temporary_storage", level=logging.WARNING, detail="accounts are lost whenever this server restarts")
     try:
         if int(os.environ.get("WEB_CONCURRENCY", "1")) > 1:
-            log_event(log, "license_multiple_workers", level=logging.WARNING, detail="developer access assumes ONE worker (WEB_CONCURRENCY=1)")
+            log_event(log, "license_multiple_workers", level=logging.WARNING, detail="several workers share one database and work correctly, but the sign-in lock-outs are counted per worker (WEB_CONCURRENCY=1 is the strictest setting)")
     except ValueError:
         pass
     log_event(log, "license_ready", key_id=key.kid, public_key=key.spki, data_dir=str(data_dir), persistent=persistent)

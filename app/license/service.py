@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import secrets as _secrets
+import sqlite3
 import time
 from dataclasses import dataclass, field
 from typing import Callable
@@ -64,7 +65,6 @@ class LicenseService:
         self.admin_fails = FailureTracker(free=5, base_ms=60_000, max_ms=1_800_000, now_ms=ms)
         self.challenge_rate = SlidingWindow(60, 60_000, now_ms=ms)
         self.refresh_rate = SlidingWindow(120, 60_000, now_ms=ms)
-        self.challenges: dict[str, tuple[str, int]] = {}
         self._public_keys = {signing_key.kid: signing_key.public_key}
         with self.db.lock:
             for k, v in (("app_active", "1"), ("unlimited_enabled", "1"), ("token_ttl_seconds", str(config.token_ttl_seconds))):
@@ -174,7 +174,10 @@ class LicenseService:
         with self.db.lock:
             if self._by_name(username):
                 raise AuthError("bad_request", "That username already exists.")
-            cur = self.db.run("INSERT INTO accounts (username, password_hash, expires_at, note, created_at, updated_at) VALUES (?,?,?,?,?,?)", username, pw_hash, expiry, str(note or "")[:200], t, t)
+            try:
+                cur = self.db.run("INSERT INTO accounts (username, password_hash, expires_at, note, created_at, updated_at) VALUES (?,?,?,?,?,?)", username, pw_hash, expiry, str(note or "")[:200], t, t)
+            except sqlite3.IntegrityError:  # another worker created it a moment ago
+                raise AuthError("bad_request", "That username already exists.") from None
             self.audit(actor, "account_create", username, None, ip)
             return self.get_account_view(cur.lastrowid)
 
@@ -184,7 +187,10 @@ class LicenseService:
         for a in accounts or []:
             if not isinstance(a, dict) or not a.get("username") or not a.get("password") or self._by_name(a["username"]):
                 continue
-            self.create_account(a["username"], a["password"], a.get("expiresAt"), a.get("note") or "seeded", actor="system")
+            try:
+                self.create_account(a["username"], a["password"], a.get("expiresAt"), a.get("note") or "seeded", actor="system")
+            except AuthError:
+                continue  # already there (perhaps just created by another worker)
             created.append(a["username"])
         return created
 
@@ -234,7 +240,10 @@ class LicenseService:
                 sets.append("note = ?"); vals.append(str(patch["note"])[:200]); notes.append("note")
             if sets:
                 sets.append("updated_at = ?"); vals.append(self.now())
-                self.db.run(f"UPDATE accounts SET {', '.join(sets)} WHERE id = ?", *vals, account_id)
+                try:
+                    self.db.run(f"UPDATE accounts SET {', '.join(sets)} WHERE id = ?", *vals, account_id)
+                except sqlite3.IntegrityError:
+                    raise AuthError("bad_request", "That username already exists.") from None
                 # a rename or a new expiry date makes the signed-in user sign in again (a note edit does not)
                 if end_sessions:
                     self._kill_sessions(account_id)
@@ -303,20 +312,23 @@ class LicenseService:
             raise AuthError("rate_limited", retry_after_seconds=30)
         t = self.now()
         with self.db.lock:
-            for k in [k for k, (_, exp) in self.challenges.items() if exp < t]:
-                del self.challenges[k]
-            if len(self.challenges) > 20_000:
-                raise AuthError("rate_limited", retry_after_seconds=30)
+            if _secrets.randbelow(20) == 0:  # tidy up now and then
+                self.db.run("DELETE FROM challenges WHERE exp < ?", t)
+                if self.db.one("SELECT COUNT(*) AS n FROM challenges")["n"] > 20_000:
+                    raise AuthError("rate_limited", retry_after_seconds=30)
             cid, nonce = C.random_token(16), C.random_token(32)
-            self.challenges[cid] = (nonce, t + 60)
+            self.db.run("INSERT INTO challenges (id, nonce, exp) VALUES (?,?,?)", cid, nonce, t + 60)
         return {"challengeId": cid, "nonce": nonce, "expiresIn": 60, "serverTime": t}
 
     def _consume_challenge(self, cid) -> str | None:
+        """Single use, whichever worker asks: only the one whose DELETE removes the row gets the nonce."""
         with self.db.lock:
-            entry = self.challenges.pop(str(cid), None)  # single use, whatever happens next
-        if entry is None:
-            return None
-        return entry[0] if entry[1] >= self.now() else None
+            row = self.db.one("SELECT nonce, exp FROM challenges WHERE id = ?", str(cid))
+            if row is None:
+                return None
+            if self.db.run("DELETE FROM challenges WHERE id = ?", str(cid)).rowcount != 1:
+                return None  # another worker used it first
+        return row["nonce"] if row["exp"] >= self.now() else None
 
     # ------------------------------------------------------------------ client authentication
 
@@ -490,7 +502,10 @@ class LicenseService:
             username, password, generated = username or "admin", C.random_token(15), True
         if len(password) < 12:
             raise ValueError("LICENSE_ADMIN_PASSWORD must be at least 12 characters")
-        self.db.run("INSERT INTO admins (username, password_hash, created_at) VALUES (?,?,?)", username, C.hash_password(password), self.now())
+        try:
+            self.db.run("INSERT INTO admins (username, password_hash, created_at) VALUES (?,?,?)", username, C.hash_password(password), self.now())
+        except sqlite3.IntegrityError:
+            return None  # another worker created the administrator a moment ago
         if generated:
             print_fn(f"\n  First administrator created for the Developer Console.\n  Username: {username}\n  Password: {password}\n  This is shown ONCE. Sign in and change it.\n")
         return {"username": username, "generated": generated}

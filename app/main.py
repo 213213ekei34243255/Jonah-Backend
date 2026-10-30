@@ -15,7 +15,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
-from app.api import routes_compat, routes_health, routes_news, routes_providers, routes_search, routes_shopping, routes_vision
+from app.api import routes_compat, routes_feedback_mail, routes_health, routes_news, routes_providers, routes_search, routes_shopping, routes_vision
 from app.cache import build_cache
 from app.cache.base import CacheBackend
 from app.config import Settings, get_settings
@@ -132,6 +132,7 @@ def create_app(
     app.include_router(routes_vision.router)
     app.include_router(routes_shopping.router)
     app.include_router(routes_providers.router)
+    app.include_router(routes_feedback_mail.router)
     app.include_router(license_router)
     app.add_exception_handler(AuthError, lambda request, exc: auth_error_response(exc))
     return app
